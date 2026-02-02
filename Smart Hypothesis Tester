@@ -1,0 +1,113 @@
+import streamlit as st
+import pandas as pd
+import scipy.stats as stats
+import seaborn as sns
+import matplotlib.pyplot as plt
+
+# Page configuration
+st.set_page_config(page_title="StatAssist: Hypothesis Tester", layout="centered")
+
+# Main Title & Description
+st.title("📊 StatAssist: Automated Hypothesis Tester")
+st.markdown("""
+This tool automates the decision-making process for statistical hypothesis testing. 
+It checks for **Normality** and **Homogeneity of Variance** assumptions to select 
+the appropriate test (ANOVA or Kruskal-Wallis) for your dataset.
+""")
+
+st.divider()
+
+# Sidebar for controls
+st.sidebar.header("Data Configuration")
+uploaded_file = st.sidebar.file_uploader("Upload CSV Dataset", type=["csv"])
+
+if uploaded_file is not None:
+    # Load Data
+    try:
+        df = pd.read_csv(uploaded_file)
+        st.write("### Dataset Preview")
+        st.dataframe(df.head())
+        
+        # Column Selection
+        st.sidebar.subheader("Variable Selection")
+        categorical_col = st.sidebar.selectbox("Select Grouping Variable (Independent)", df.columns)
+        numerical_col = st.sidebar.selectbox("Select Target Variable (Dependent)", df.select_dtypes(include=['float64', 'int64']).columns)
+
+        if st.sidebar.button("Run Analysis"):
+            st.divider()
+            st.subheader("1. Assumptions Check")
+            
+            # Prepare data groups
+            groups = df[categorical_col].unique()
+            group_data = [df[df[categorical_col] == g][numerical_col].dropna() for g in groups]
+
+            # 1. Normality Test (Shapiro-Wilk)
+            st.markdown("**A. Normality (Shapiro-Wilk Test)**")
+            normality_passed = True
+            
+            col1, col2 = st.columns(2)
+            
+            for g, data in zip(groups, group_data):
+                stat_val, p_val = stats.shapiro(data)
+                if p_val < 0.05:
+                    normality_passed = False
+                    st.warning(f"Group '{g}': Not Normal (p={p_val:.4f})")
+                else:
+                    st.success(f"Group '{g}': Normal Distribution (p={p_val:.4f})")
+
+            # 2. Homogeneity of Variance (Levene's Test)
+            st.markdown("**B. Homogeneity of Variance (Levene's Test)**")
+            stat_lev, p_lev = stats.levene(*group_data)
+            homogeneity_passed = p_lev > 0.05
+            
+            if homogeneity_passed:
+                st.success(f"Variances are Homogeneous (p={p_lev:.4f})")
+            else:
+                st.error(f"Variances are NOT Homogeneous (p={p_lev:.4f})")
+
+            st.divider()
+
+            # 3. Automated Test Selection & Execution
+            st.subheader("2. Test Selection & Results")
+            
+            test_used = ""
+            final_stat = 0
+            final_p = 0
+            
+            # Decision Logic
+            if normality_passed and homogeneity_passed:
+                test_used = "One-Way ANOVA"
+                st.info(f"✅ Decision: Assumptions met. Running **{test_used}**.")
+                final_stat, final_p = stats.f_oneway(*group_data)
+            else:
+                reason = "Normality assumption failed" if not normality_passed else "Variance homogeneity failed"
+                test_used = "Kruskal-Wallis H Test"
+                st.warning(f"⚠️ Decision: {reason}. Running Non-Parametric **{test_used}**.")
+                final_stat, final_p = stats.kruskal(*group_data)
+
+            # Display Results
+            result_container = st.container(border=True)
+            result_container.metric(label=f"{test_used} p-value", value=f"{final_p:.5f}")
+            
+            if final_p < 0.05:
+                result_container.success("**Result:** Significant difference detected between groups (Reject H0).")
+            else:
+                result_container.info("**Result:** No significant difference detected (Fail to reject H0).")
+
+            # 4. Visualization
+            st.subheader("3. Visualization")
+            fig, ax = plt.subplots(figsize=(10, 6))
+            
+            # Boxplot with stripplot for better data visibility
+            sns.boxplot(x=categorical_col, y=numerical_col, data=df, ax=ax, palette="vlag")
+            sns.stripplot(x=categorical_col, y=numerical_col, data=df, color=".3", ax=ax, alpha=0.6)
+            
+            ax.set_title(f"Distribution of {numerical_col} by {categorical_col}")
+            st.pyplot(fig)
+
+    except Exception as e:
+        st.error(f"An error occurred while processing the file: {e}")
+        st.write("Please ensure your CSV file has the correct format.")
+
+else:
+    st.info("Awaiting CSV file upload. Please use the sidebar to upload your dataset.")
